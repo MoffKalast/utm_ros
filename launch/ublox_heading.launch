@@ -1,0 +1,20 @@
+<launch>
+
+  <node name="gnss_utm_node" pkg="utm_ros" type="gnss_to_utm.py" output="screen">
+    <param name="base_frame" value="base_link"/>
+    <param name="local_frame" value="local"/>
+    <param name="world_frame" value="world"/>
+    
+    <param name="publish_tf" value="False"/>
+    <param name="publish_odom" value="True"/>
+
+    <param name="use_imu" value="True"/>
+
+    <param name="ignore_imu_covariance" value="False"/>
+    <param name="ignore_fix_status" value="False"/>
+
+    <remap from="/fix" to="/gnss/fix"/>
+    <remap from="/imu/data" to="/gnss/heading"/>
+  </node>
+
+</launch>

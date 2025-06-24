@@ -1,0 +1,23 @@
+<package format="2">
+	<name>utm_ros</name>
+	<version>0.1.0</version>
+	<description>Managing GNSS data with an UTM projection.</description>
+
+	<maintainer email="vid.rijavec@fri.uni-lj.si">Vid Rijavec</maintainer>
+
+	<author>Vid Rijavec</author>
+
+	<license>MIT</license>
+
+	<buildtool_depend>catkin</buildtool_depend>
+
+	<depend>std_msgs</depend>
+	<depend>sensor_msgs</depend>
+
+	<build_depend>message_generation</build_depend>
+	<build_export_depend>message_runtime</build_export_depend>
+
+	<exec_depend>message_runtime</exec_depend>
+	<exec_depend>rospy</exec_depend>
+
+</package>

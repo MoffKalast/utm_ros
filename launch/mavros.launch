@@ -1,0 +1,18 @@
+<launch>
+
+  <node name="gnss_utm_node" pkg="utm_ros" type="gnss_to_utm.py" output="screen">
+    <param name="base_frame" value="base_link"/>
+    <param name="local_frame" value="local"/>
+    <param name="world_frame" value="world"/>
+    
+    <param name="publish_tf" value="True"/>
+    <param name="publish_odom" value="True"/>
+
+    <param name="use_imu" value="True"/>
+    <param name="ignore_fix_status" value="True"/>
+
+    <remap from="/fix" to="/mavros/global_position/global"/>
+    <remap from="/imu/data" to="/mavros/imu/data"/>
+  </node>
+
+</launch>
