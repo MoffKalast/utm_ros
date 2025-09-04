@@ -13,6 +13,8 @@ add_service_files(
 	FILES
 	LLAToUTM.srv
 	UTMToLLA.srv
+	LLAToENU.srv
+	ENUToLLA.srv
 )
 
 catkin_python_setup()
