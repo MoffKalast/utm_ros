@@ -135,16 +135,19 @@ class GNSSENUNode:
 
         # Use consistent origin if specified
         if self.param_origin_lat is not None and self.param_origin_lon is not None:
-            dist = haversine(
+            dist = int(haversine(
                 self.param_origin_lat, 
                 self.param_origin_lon,
                 self.local_origin_fix.latitude,
                 self.local_origin_fix.longitude
-            )
+            ))
 
-            self.local_origin_fix.latitude = self.param_origin_lat
-            self.local_origin_fix.longitude = self.param_origin_lon
-            rospy.loginfo(f"GNSS Origin override enabled, distance {int(dist)}m!")
+            if dist < 20_000:
+                self.local_origin_fix.latitude = self.param_origin_lat
+                self.local_origin_fix.longitude = self.param_origin_lon
+                rospy.loginfo(f"GNSS Origin override enabled, distance {int(dist)}m!")
+            else:
+                rospy.logwarn(f"GNSS Origin override over 20 km away, ignoring to maintain precision.")
         
         proj_string = "+proj=tmerc "
         proj_string += f"+lat_0={self.local_origin_fix.latitude} "
