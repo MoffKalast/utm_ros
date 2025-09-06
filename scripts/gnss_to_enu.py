@@ -130,8 +130,20 @@ class GNSSENUNode:
         self.update()
 
     def init_gps(self, msg):
-        self.local_origin_fix = msg
-        self.local_origin_fix.header.frame_id = self.param_local_link
+        local = NavSatFix()
+        local.header.stamp = rospy.Time.now()
+        local.header.frame_id = self.param_local_link
+        local.status = msg.status
+        local.latitude = msg.latitude
+        local.longitude = msg.longitude
+        local.altitude = msg.altitude
+        local.position_covariance = [
+            1e-6, 0.0, 0.0,
+            0.0, 1e-6, 0.0,
+            0.0, 0.0, 1e-6
+        ]
+        local.position_covariance_type = NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
+        self.local_origin_fix = local
 
         # Use consistent origin if specified
         if self.param_origin_lat is not None and self.param_origin_lon is not None:
@@ -142,12 +154,12 @@ class GNSSENUNode:
                 self.local_origin_fix.longitude
             ))
 
-            if dist < 20_000:
+            if dist < 15_000:
                 self.local_origin_fix.latitude = self.param_origin_lat
                 self.local_origin_fix.longitude = self.param_origin_lon
                 rospy.loginfo(f"GNSS Origin override enabled, distance {int(dist)}m!")
             else:
-                rospy.logwarn(f"GNSS Origin override over 20 km away, ignoring to maintain precision.")
+                rospy.logwarn(f"GNSS Origin override over 15 km away, setting ad-hoc one to maintain precision.")
         
         proj_string = "+proj=tmerc "
         proj_string += f"+lat_0={self.local_origin_fix.latitude} "
@@ -161,6 +173,9 @@ class GNSSENUNode:
         rospy.loginfo(f"GNSS Initialized local origin at {self.local_origin_fix.latitude}, {self.local_origin_fix.longitude}")                
 
     def update(self):
+        if self.proj_lla_to_enu is None or self.gps_fix is None:
+            return
+
         east, north = self.convert_lla_to_enu(
             self.gps_fix.latitude, 
             self.gps_fix.longitude
