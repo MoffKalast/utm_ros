@@ -125,6 +125,10 @@ class GNSSENUNode:
         
         if self.gps_fix is None:
             self.init_gps(copy.deepcopy(msg))
+
+        if self.gps_fix and self.gps_fix.latitude == msg.latitude and self.gps_fix.longitude == msg.longitude and self.gps_fix.altitude == msg.altitude:
+            #repeated message, ignore
+            return
         
         self.gps_fix = msg
         self.update()
