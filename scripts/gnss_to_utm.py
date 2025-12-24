@@ -48,6 +48,11 @@ class GNSSUTMNode:
         self.zone_letter = None
         self.zone_number = None
 
+        self.origin_lat = None
+        self.origin_lon = None
+        self.origin_lambda0 = None
+
+
         self.origin_x = None
         self.origin_y = None
         self.origin_z = None
@@ -67,8 +72,19 @@ class GNSSUTMNode:
                 force_zone_letter=self.zone_letter if self.zone_letter else None
             )
             
-            x -= self.origin_x
-            y -= self.origin_y
+            dx = x - self.origin_x
+            dy = y - self.origin_y
+
+            lat_rad = math.radians(req.latitude)
+            lon_rad = math.radians(req.longitude)
+
+            k, gamma = self.utm_scale_and_convergence(lat_rad, lon_rad)
+
+            dx /= k
+            dy /= k
+
+            local_x =  math.cos(gamma) * dx + math.sin(gamma) * dy
+            local_y = -math.sin(gamma) * dx + math.cos(gamma) * dy
 
             return LLAToUTMResponse(x, y, True)
 
@@ -81,8 +97,22 @@ class GNSSUTMNode:
 
             if self.zone_number is None or self.origin_x is None:
                 return UTMToLLAResponse(0.0, 0.0, 0.0, False)
+            
+            lat_rad = self.origin_lat
+            lon_rad = self.origin_lon
 
-            lat, lon = utm.to_latlon(req.x + self.origin_x, req.y + self.origin_y, self.zone_number, self.zone_letter)
+            k, gamma = self.utm_scale_and_convergence(lat_rad, lon_rad)
+
+            dx =  math.cos(gamma) * req.x - math.sin(gamma) * req.y
+            dy =  math.sin(gamma) * req.x + math.cos(gamma) * req.y
+
+            dx *= k
+            dy *= k
+
+            utm_x = dx + self.origin_x
+            utm_y = dy + self.origin_y
+
+            lat, lon = utm.to_latlon(utm_x, utm_y, self.zone_number, self.zone_letter)
             return UTMToLLAResponse(lat, lon, True)
 
         except Exception as e:
@@ -111,6 +141,14 @@ class GNSSUTMNode:
         self.gps_data = msg
         self.process_data()
 
+    def utm_scale_and_convergence(self, lat_rad, lon_rad):
+        dlon = lon_rad - self.origin_lambda0
+
+        k = 0.9996 * (1 + (dlon**2 * math.cos(lat_rad)**2) / 2)
+        gamma = math.atan(math.tan(dlon) * math.sin(lat_rad))
+
+        return k, gamma
+
     def process_data(self):
         if self.gps_data is None:
             return
@@ -136,6 +174,12 @@ class GNSSUTMNode:
             self.origin_x = x
             self.origin_y = y
             self.origin_z = z
+
+            self.origin_lat = math.radians(self.gps_data.latitude)
+            self.origin_lon = math.radians(self.gps_data.longitude)
+            # central meridian of the UTM zone
+            self.origin_lambda0 = math.radians((self.zone_number - 1) * 6 - 180 + 3)
+
             self.origin_fix = self.gps_data
             self.origin_fix.header.frame_id = self.param_local_link
             self.gnss_origin_pub.publish(self.origin_fix)
@@ -150,8 +194,21 @@ class GNSSUTMNode:
             world_to_local_msg.transform.rotation.w = 1.0
             self.static_tf_broadcaster.sendTransform(world_to_local_msg)
 
-        local_x = x - self.origin_x
-        local_y = y - self.origin_y
+        dx = x - self.origin_x
+        dy = y - self.origin_y
+
+        lat_rad = math.radians(self.gps_data.latitude)
+        lon_rad = math.radians(self.gps_data.longitude)
+
+        k, gamma = self.utm_scale_and_convergence(lat_rad, lon_rad)
+
+        # scale correction
+        dx /= k
+        dy /= k
+
+        # rotate grid -> local tangent frame
+        local_x =  math.cos(gamma) * dx + math.sin(gamma) * dy
+        local_y = -math.sin(gamma) * dx + math.cos(gamma) * dy
 
         if self.param_publish_tf:
             local_to_base_msg = TransformStamped()
