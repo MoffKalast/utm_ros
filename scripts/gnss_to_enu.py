@@ -3,7 +3,9 @@
 import rospy
 import math
 import tf2_ros
-from pyproj import CRS, Transformer, Proj
+
+from pyproj import Transformer
+from pyproj.enums import TransformDirection
 
 from sensor_msgs.msg import NavSatFix, Imu
 from nav_msgs.msg import Odometry
@@ -39,6 +41,7 @@ class GNSSENUNode:
         # Consistent origin parameters
         self.param_origin_lat = rospy.get_param('~origin_latitude', None)
         self.param_origin_lon = rospy.get_param('~origin_longitude', None)
+        self.param_origin_alt = rospy.get_param('~origin_altitude', None)
 
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
 
@@ -48,8 +51,7 @@ class GNSSENUNode:
         self.gps_fix = None
 
         self.enu_proj = None
-        self.proj_lla_to_enu = None
-        self.proj_enu_to_lla = None
+        self.enu_transformer = None
 
         if self.param_use_imu:
             self.imu_sub = rospy.Subscriber('/imu/data', Imu, self.imu_callback)
@@ -69,7 +71,7 @@ class GNSSENUNode:
 
     def convert_lla_to_enu(self, lat, lon):
         try:
-            east, north = self.proj_lla_to_enu.transform(lon, lat)
+            east, north, up = self.enu_transformer.transform(lon, lat, self.local_origin_fix.altitude)
             return east, north
         except Exception as e:
             rospy.logerr(f"LLA to ENU conversion failed: {e}")
@@ -77,7 +79,7 @@ class GNSSENUNode:
 
     def convert_enu_to_lla(self, east, north):
         try:
-            lon, lat = self.proj_enu_to_lla.transform(east, north)
+            lon, lat, alt = self.enu_transformer.transform(east, north, 0.0, direction=TransformDirection.INVERSE)
             return lat, lon
         except Exception as e:
             rospy.logerr(f"ENU to LLA conversion failed: {e}")
@@ -147,6 +149,11 @@ class GNSSENUNode:
             0.0, 0.0, 1e-6
         ]
         local.position_covariance_type = NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
+
+        #override if specified
+        if self.param_origin_alt is not None:
+            local.altitude = self.param_origin_alt
+
         self.local_origin_fix = local
 
         # Use consistent origin if specified
@@ -158,26 +165,25 @@ class GNSSENUNode:
                 self.local_origin_fix.longitude
             ))
 
-            if dist < 15_000:
+            if dist < 30_000:
                 self.local_origin_fix.latitude = self.param_origin_lat
                 self.local_origin_fix.longitude = self.param_origin_lon
                 rospy.loginfo(f"GNSS Origin override enabled, distance {int(dist)}m!")
             else:
-                rospy.logwarn(f"GNSS Origin override over 15 km away, setting ad-hoc one to maintain precision.")
-        
-        proj_string = "+proj=tmerc "
-        proj_string += f"+lat_0={self.local_origin_fix.latitude} "
-        proj_string += f"+lon_0={self.local_origin_fix.longitude} "
-        proj_string += f"+k=1 +x_0=0 +y_0=0 +ellps={self.param_ellipsoid_model} +units=m +no_defs +type=crs"
-        world_enu_proj = Proj(proj_string)
+                rospy.logwarn(f"GNSS Origin override over 30 km away, setting ad-hoc one to maintain precision.")
 
-        self.proj_lla_to_enu = Transformer.from_crs("EPSG:4326", world_enu_proj.crs, always_xy=True)
-        self.proj_enu_to_lla = Transformer.from_crs(world_enu_proj.crs, "EPSG:4326", always_xy=True)
+        pipeline = (
+            f"+proj=pipeline "
+            f"+step +proj=cart +ellps={self.param_ellipsoid_model} "
+            f"+step +proj=topocentric +ellps={self.param_ellipsoid_model} "
+            f"+lat_0={self.local_origin_fix.latitude} +lon_0={self.local_origin_fix.longitude} +h_0={self.local_origin_fix.altitude}"
+        )
+        self.enu_transformer = Transformer.from_pipeline(pipeline)
 
         rospy.loginfo(f"GNSS Initialized local origin at {self.local_origin_fix.latitude}, {self.local_origin_fix.longitude}")                
 
     def update(self):
-        if self.proj_lla_to_enu is None or self.gps_fix is None:
+        if self.enu_transformer is None or self.gps_fix is None:
             return
 
         east, north = self.convert_lla_to_enu(
@@ -195,7 +201,7 @@ class GNSSENUNode:
 
         if self.param_publish_tf:
             local_to_base_msg = TransformStamped()
-            local_to_base_msg.header.stamp = rospy.Time.now()
+            local_to_base_msg.header.stamp = self.gps_fix.header.stamp
             local_to_base_msg.header.frame_id = self.param_local_link
             local_to_base_msg.child_frame_id = self.param_base_link
             local_to_base_msg.transform.translation.x = east
@@ -205,15 +211,15 @@ class GNSSENUNode:
             self.tf_broadcaster.sendTransform(local_to_base_msg)
 
         cov = [0.0] * 36
-        cov[0] = math.sqrt(math.fabs(self.gps_fix.position_covariance[0]))
-        cov[7] = math.sqrt(math.fabs(self.gps_fix.position_covariance[4]))
-        cov[14] = math.sqrt(math.fabs(self.gps_fix.position_covariance[8]))
+        cov[0] = math.fabs(self.gps_fix.position_covariance[0])
+        cov[7] = math.fabs(self.gps_fix.position_covariance[4])
+        cov[14] = math.fabs(self.gps_fix.position_covariance[8])
 
         if self.param_publish_odom:
             odom_msg = Odometry()
             odom_msg.child_frame_id = self.param_base_link 
             odom_msg.header.frame_id = self.param_local_link
-            odom_msg.header.stamp = rospy.Time.now()
+            odom_msg.header.stamp = self.gps_fix.header.stamp
             odom_msg.pose.pose.position.x = east
             odom_msg.pose.pose.position.y = north
             odom_msg.pose.pose.position.z = 0.0
@@ -229,7 +235,7 @@ class GNSSENUNode:
 
         pose_msg = PoseWithCovarianceStamped()
         pose_msg.header.frame_id = self.param_local_link
-        pose_msg.header.stamp = rospy.Time.now()
+        pose_msg.header.stamp = self.gps_fix.header.stamp
         pose_msg.pose.pose.position.x = east
         pose_msg.pose.pose.position.y = north
         pose_msg.pose.pose.position.z = 0.0
